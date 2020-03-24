@@ -1,0 +1,3 @@
+notify:
+  webhooks:
+    - url: https://outlook.office.com/webhook/94f4c689-105d-4b90-89ce-a2b8003d054f@67948b7a-ee5e-4001-9c31-708bdbdc9bf5/CircleCI/772270dbb12749499b5fa15ae5ad54dc/c33ecc1d-b43f-4fd0-99e3-f82cb82576f9

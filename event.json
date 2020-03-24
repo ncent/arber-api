@@ -1,0 +1,15 @@
+{
+    "Records": [
+      {
+        "kinesis": {
+          "partitionKey": "s1",
+          "sequenceNumber": "49568167373333333333333333333333333333333333333333333333",
+          "data": "SGVsbG8gV29ybGQ="
+        },
+        "eventSource": "aws:kinesis",
+        "eventVersion": "1.0",
+        "eventID": "shardId-000000000000:49568167373333333333333333333333333333333333333333333333",
+        "eventName": "aws:kinesis:record"
+      }
+    ]
+  }

@@ -1,0 +1,348 @@
+service: arber-core-${opt:stage}-${self:custom.version}
+
+custom:
+  customDomain:
+    domainName: ""
+    basePath: ''
+    stage: ${opt:stage, self:provider.stage}
+    createRoute53Record: false
+  stage: ${opt:stage, self:provider.stage}
+  version: ${ssm:/ncnt/arber-dev/${opt:stage}/version, 0001}
+  names:
+    bucket: 
+      store: ${self:service}-store
+    resource: track
+    dynamodb: ${self:service}-data
+    kinesis: ${self:service}-stream
+  output:
+    file: .serverless/output.json
+  capacities:
+    - table: DynamoDBTable
+      read:
+        minimum: 10
+        maximum: 120
+      write:
+        minimum: 10
+        maximum: 120
+
+frameworkVersion: ">=1.28.0 <2.0.0"
+
+plugins:
+  - serverless-deployment-bucket
+  - serverless-plugin-additional-stacks
+  - serverless-dynamodb-local
+  - serverless-appsync-plugin
+  - serverless-appsync-offline
+  - serverless-offline
+  - serverless-domain-manager
+  - serverless-prune-plugin
+
+provider:
+  name: aws
+  runtime: go1.x
+  region: ${opt:region, 'us-west-2'}
+  accountId: ''
+  streamName: ${opt:stage}-stream-data-receiver
+  deploymentBucket:
+    name: arber-${opt:stage}-deployment-bucket-${self:custom.version}
+    serverSideEncryption: AES256
+  iamRoleStatements:
+    - Effect: "Allow"
+      Resource: "*"
+      # Resource: ${env:AWS_KINESIS_ARN}
+      Action:
+        - "kinesis:GetRecords"
+        - "kinesis:GetShardIterator"
+        - "kinesis:DescribeStream"
+        - "kinesis:ListStreams"
+        - "kinesis:PutRecord"
+        - "kinesis:PutRecords"
+        - "kinesis:CreateStream"
+        - "lambda:AWSLambdaRole"
+        - "apigateway:GET"
+        - "apigateway:POST"
+        - "apigateway:PUT"
+        - "apigateway:DELETE"
+        - "cloudformation:CreateStack"
+        - "cloudformation:Describe*"
+        - "cloudformation:ValidateTemplate"
+        - "cloudformation:UpdateStack"
+        - "cloudformation:List*"
+        - "iam:GetRole"
+        - "iam:PassRole"
+        - "iam:CreateRole"
+        - "iam:DeleteRole"
+        - "iam:CreateServiceLinkedRole"
+        - "iam:DetachRolePolicy"
+        - "iam:PutRolePolicy"
+        - "iam:AttachRolePolicy"
+        - "iam:DeleteRolePolicy"
+        - "lambda:UpdateFunctionCode"
+        - "lambda:Get*"
+        - "lambda:CreateFunction"
+        - "lambda:InvokeFunction"
+        - "lambda:UpdateFunctionConfiguration"
+        - "lambda:PublishVersion"
+        - "lambda:DeleteFunction"
+        - "lambda:DeleteLayerVersion"
+        - "lambda:List*"
+        - "lambda:AddPermission"
+        - "s3:CreateBucket"
+        - "s3:DeleteObject"
+        - "s3:GetObject"
+        - "s3:GetBucketLocation"
+        - "s3:ListBucket"
+        - "s3:PutObject"
+        - "s3:PutObjectAcl"
+        - "s3:DeleteBucket"
+        - "s3:GetEncryptionConfiguration"
+        - "s3:PutEncryptionConfiguration"
+        - "s3:PutBucketNotification"
+        - "logs:Describe*"
+        - "logs:CreateLogGroup"
+        - "logs:DeleteLogGroup"
+        - "events:PutRule"
+        - "events:DescribeRule"
+        - "events:PutTargets"
+        - "dynamodb:UpdateItem"
+        - "dynamodb:Scan"
+        - "sts:AssumeRole"
+        - "firehose:DeleteDeliveryStream"
+        - "firehose:PutRecord"
+        - "firehose:PutRecordBatch"
+        - "firehose:UpdateDestination"
+        - "firehose:CreateDeliveryStream"
+        - "appsync:GraphQL"
+        - "appsync:GetGraphqlApi"
+        - "appsync:ListGraphqlApis"
+        - "appsync:ListApiKeys"
+        - 'dynamodb:ListTables'
+        - 'dynamodb:DescribeTable'
+        - 'dynamodb:DescribeStream'
+        - 'dynamodb:ListStreams'
+        - 'dynamodb:GetShardIterator'
+        - 'dynamodb:BatchGetItem'
+        - 'dynamodb:GetItem'
+        - 'dynamodb:Query'
+        - 'dynamodb:Scan'
+        - 'dynamodb:DescribeReservedCapacity'
+        - 'dynamodb:DescribeReservedCapacityOfferings'
+        - 'dynamodb:GetRecords'
+          
+functions:
+  publisher:
+    handler: bin/kinesis/publisher
+    environment:
+      AWS_KINESIS_NAME: ${self:provider.streamName}
+  consumer:
+    handler: bin/kinesis/consumer
+    environment:
+      AWS_KINESIS_NAME: ${self:provider.streamName}
+  archiver:
+    handler: bin/kinesis/archiver
+    events:
+      - stream: arn:aws:kinesis:${self:provider.region}:${self:provider.accountId}:stream/${self:provider.streamName}
+    environment:
+      AWS_KINESIS_NAME: ${self:provider.streamName}
+  sendEmail:
+    handler: bin/emailer/send
+    events:
+      - http:
+          path: /email
+          method: post
+          cors:
+            origin: '*'
+            headers:
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+              - X-Amz-User-Agent
+            allowCredentials: false
+          # authorizer: aws_iam
+          # private: true
+  receiveMail:
+    handler: bin/emailer/receive
+    environment:
+      S3_BUCKET: redb-inbox
+      AWS_APP_SYNC_URL: ${ssm:/ncnt/arber/appsync/${opt:stage}/url:2}
+      AWS_APP_SYNC_ID: ${ssm:/ncnt/arber/appsync/${opt:stage}/id:3~true}
+      GOOGLE_OAUTH_CLIENT_ID: ${ssm:/ncnt/arber/google/auth/client/${opt:stage}/id}
+      GOOGLE_OAUTH_CLIENT_SECRET: ${ssm:/ncnt/arber/google/auth/client/${opt:stage}/secret~true}
+      GOOGLE_OAUTH_ENDPOINT_TOKEN_URL: ${ssm:/ncnt/arber/google/auth/token/${opt:stage}/url}
+      SHORTEN_URL_LAMBDA: ${ssm:/ncnt/shorten/url/lambda/${opt:stage}}
+  sendGmail:
+    handler: bin/google/gmail/send
+    events:
+      - http:
+          path: /gmail
+          method: post
+          cors:
+            origin: '*'
+            headers:
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+              - X-Amz-User-Agent
+            allowCredentials: false
+          # authorizer: aws_iam
+          # private: true
+    environment:
+      AWS_APP_SYNC_URL: ${ssm:/ncnt/arber/appsync/${opt:stage}/url:2}
+      AWS_APP_SYNC_ID: ${ssm:/ncnt/arber/appsync/${opt:stage}/id:3~true}
+      GOOGLE_OAUTH_CLIENT_ID: ${ssm:/ncnt/arber/google/auth/client/${opt:stage}/id}
+      GOOGLE_OAUTH_CLIENT_SECRET: ${ssm:/ncnt/arber/google/auth/client/${opt:stage}/secret~true}
+      GOOGLE_OAUTH_ENDPOINT_TOKEN_URL: ${ssm:/ncnt/arber/google/auth/token/${opt:stage}/url}
+  reshare:
+    handler: bin/mail/reshare
+    events:
+      - http:
+          path: /reshare
+          method: get
+          cors:
+            origin: '*'
+            headers:
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+              - X-Amz-User-Agent
+            allowCredentials: false
+          # authorizer: aws_iam
+          # private: true
+    environment:
+      AWS_APP_SYNC_URL: ${ssm:/ncnt/arber/appsync/${opt:stage}/url:2}
+      AWS_APP_SYNC_ID: ${ssm:/ncnt/arber/appsync/${opt:stage}/id:3~true}
+      GOOGLE_OAUTH_CLIENT_ID: ${ssm:/ncnt/arber/google/auth/client/${opt:stage}/id}
+      GOOGLE_OAUTH_CLIENT_SECRET: ${ssm:/ncnt/arber/google/auth/client/${opt:stage}/secret~true}
+      GOOGLE_OAUTH_ENDPOINT_TOKEN_URL: ${ssm:/ncnt/arber/google/auth/token/${opt:stage}/url}
+      SHORTEN_URL_LAMBDA: ${ssm:/ncnt/shorten/url/lambda/${opt:stage}}
+  populateUserContacts:
+    handler: bin/user/google/contacts/new
+    timeout: 900
+    environment:
+      AWS_APP_SYNC_URL: ${ssm:/ncnt/arber/appsync/${opt:stage}/url:2}  
+      AWS_APP_SYNC_ID: ${ssm:/ncnt/arber/appsync/${opt:stage}/id:3~true}
+      GOOGLE_OAUTH_CLIENT_ID: ${ssm:/ncnt/arber/google/auth/client/${opt:stage}/id}
+      GOOGLE_OAUTH_CLIENT_SECRET: ${ssm:/ncnt/arber/google/auth/client/${opt:stage}/secret~true}
+      GOOGLE_OAUTH_ENDPOINT_TOKEN_URL: ${ssm:/ncnt/arber/google/auth/token/${opt:stage}/url}
+  newUserGoogleConnectApi:
+    handler: bin/user/google/new
+    timeout: 30
+    events:
+      - http:
+          path: /user
+          method: post
+          cors:
+            origin: '*'
+            headers:
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+              - X-Amz-User-Agent
+              - jwt
+            allowCredentials: false
+          # authorizer: aws_iam
+          # private: true
+    environment:
+      AWS_APP_SYNC_URL: ${ssm:/ncnt/arber/appsync/${opt:stage}/url:2}
+      AWS_APP_SYNC_ID: ${ssm:/ncnt/arber/appsync/${opt:stage}/id:3~true}
+      GOOGLE_OAUTH_CLIENT_ID: ${ssm:/ncnt/arber/google/auth/client/${opt:stage}/id}
+      GOOGLE_OAUTH_CLIENT_SECRET: ${ssm:/ncnt/arber/google/auth/client/${opt:stage}/secret~true}
+      GOOGLE_OAUTH_ENDPOINT_TOKEN_URL: ${ssm:/ncnt/arber/google/auth/token/${opt:stage}/url}
+      POPULATE_USER_CONTACTS_LAMBDA: ${self:service}-${opt:stage}-populateUserContacts
+  scheduleTransaction:
+    handler: bin/dynamodb/scheduleTransaction
+    events:
+      - stream: ${ssm:/ncnt/arber/dynamo/${opt:stage}/arn}
+      # - stream:
+      #     type: dynamodb
+      #     batchSize: 100
+      #     enabled: true
+      #     # arn: { "Fn::GetAtt": ["Transaction", "StreamArn"] }
+
+resources:
+  Resources:
+    FirehoseToS3Role:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: FirehoseToS3Role-${opt:stage}
+        AssumeRolePolicyDocument:
+          Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+              - firehose.amazonaws.com
+            Action:
+            - sts:AssumeRole
+        Policies:
+        - PolicyName: FirehoseToS3Policy
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                - s3:AbortMultipartUpload
+                - s3:GetBucketLocation
+                - s3:GetObject
+                - s3:ListBucket
+                - s3:ListBucketMultipartUploads
+                - s3:PutObject
+                Resource: '*'
+    ServerlessKinesisFirehoseBucket:
+      Type: AWS::S3::Bucket
+      DeletionPolicy: Retain
+      Properties:
+        BucketName: arber-${opt:stage}-firehose-bucket-${self:custom.version}
+    ServerlessKinesisFirehose:
+      Type: AWS::KinesisFirehose::DeliveryStream
+      Properties:
+        DeliveryStreamName: ${self:provider.streamName}
+        S3DestinationConfiguration:
+          BucketARN:
+            Fn::Join:
+            - ''
+            - - 'arn:aws:s3:::'
+              - Ref: ServerlessKinesisFirehoseBucket
+          BufferingHints:
+            IntervalInSeconds: "60"
+            SizeInMBs: "1"
+          CompressionFormat: "UNCOMPRESSED"
+          Prefix: "raw/"
+          RoleARN: { Fn::GetAtt: [ FirehoseToS3Role, Arn ] }
+    ArberKinesisStream:
+      Type: AWS::Kinesis::Stream
+      Properties:
+        Name: ${self:provider.streamName}
+        ShardCount: 1
+    DynamoDBTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.names.dynamodb}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: date
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+          - AttributeName: date
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5
+
+package:
+ exclude:
+   - node_modules/**
+   - '!node_modules/.cache'
+   - Gopkg.lock
+ include:
+   - bin/**/**
+   - bin/**/**/**

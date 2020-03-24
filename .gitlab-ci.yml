@@ -1,0 +1,41 @@
+image: node:latest
+
+before_script:
+  - apt-get update -y
+  - apt-get install zip -y
+stages:
+  - build
+  - deploy
+
+
+buildApp:
+  stage: build
+  image: golang:latest
+  cache:
+    paths:
+      - .cache
+  script:
+    - mkdir -p .cache
+    - export GOPATH="$CI_PROJECT_DIR/.cache"
+    - make build
+  artifacts:
+    when: on_success
+    paths:
+      - bin
+
+
+production:
+  stage: deploy
+  before_script:
+    - npm config set prefix /usr/local
+    - npm install -g serverless
+    - npm install
+  script:
+    - serverless deploy --stage production --verbose
+  environment: production
+  dependencies:
+    - buildApp
+  only:
+    refs:
+      - master
+
